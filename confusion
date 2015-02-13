@@ -1,0 +1,78 @@
+prelude
+[syntax]
+x a set
+ [a ∈ x] valid syntax
+
+s a set, [s] a set
+  1 ∈ [s]
+  x, y ∈ [s] => x + y ∈ [s]
+  x + y + z = (x + y) + z
+  1 + x = x + 1 = x
+
+
+let s be a set. _
+
+let s1 and s2 be sets. the product of s1 and s2 , s1 × s2, is
+  the set of pairs (x, y) where x ∈ s1 and y ∈ s2.
+
+
+x : s1
+y : s2
+(x, y) : s1 × s2
+
+let s be a set. a product on s is a function f : [s] -> s and an element e ∈ s
+ such that
+  f [] = e
+  f [x] = x
+  f (xs + ys) = f [f xs, f ys]
+
+  f [e, x] = f [f [], f [x]] = f ([] + [x]) = f [x] = x
+
+let s be a set. a product on s is a function f : s -> s -> s and an element e ∈ s
+ such that
+  f a (f b c) = f (f a b) c
+  f a e = f e a = a
+
+
+
+unification equality vs mathematical equality?
+ - u e acts on references to objects
+ - proving a nontrivial a = b allows use of 'the', u e
+
+
+let x, y ∈ X. the element of X × X is diagonal if x = y.
+let [x, y] ∈ X.
+
+
+a, P -> P a
+
+x, y, z, P  -> P x, P y, P z
+
+
+basic symbols:
+ ∈
+ →
+ =
+ set, function
+
+ ,
+ and
+ a
+ the
+ let _ be
+ .
+ is
+
+
+time:
+ when _ , _
+
+
+
+
+N_r  is the set of natural numbers less than r
+
+a matrix with entries in S is a function f : (N<r) -> (N<c) -> S.
+a linear operator is an element of (U* tensor V)
+given a basis of U and a basis of V, with dimensions m and n
+the sequence 
