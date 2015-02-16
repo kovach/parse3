@@ -1,5 +1,38 @@
 module See.Tests where
 import See.Types
+import qualified Data.Map as M
+
+-- Testing
+main :: String -> IO ()
+main = main' True
+main' :: Bool -> String -> IO ()
+main' closed str = chk $ do
+  stack <- parse str
+  -- get result
+  val <- pop stack
+
+  -- If closed is true, parsing will fail unless stack contains exactly one
+  -- element
+  if closed then 
+    assertEmpty stack else
+    return ()
+
+  return val
+
+chk :: VM Name -> IO ()
+chk m =
+  let worlds = runUM m
+      (values, _) = unzip worlds
+  in do
+    mapM_
+      (\(value, (_, env)) -> do
+        putStrLn ">>>>>>>"
+        mapM_ print (M.toList env)
+        putStrLn "<<<<<<<"
+        putStrLn ("VALUE: " ++ show value))
+      worlds
+    putStrLn ("-------\nPARSE COUNT: " ++ show (length values))
+
 
 p0 = var >> var
 p1 = do
