@@ -99,6 +99,7 @@ data Subl a = Subl
 -- Core datatype
 data Val a
   = Var
+  | Ref Name
   | Val Tag [a]
   | Prop (Link a)
   | Sub (Subl a)
@@ -219,6 +220,15 @@ matrixRule = do
   pre <- storeList [c, by, r]
   nil <- store Nil
   return $ Subl {pre = pre, post = nil, output = m}
+
+tupleRule :: Rule
+tupleRule = do
+  (a, _) <- integer
+  (b, _) <- integer
+  pre <- storeList [b, a]
+  post <- store Nil
+  out <- storeList [a,b]
+  return $ Subl {pre = pre, post = post, output = out}
 
 -- Need a (internal) context object to put in the heap to bind names
 --   map from symbol (Tag) to Name
@@ -389,7 +399,9 @@ parenRule = do
 
 -- Rule Simplification
 bindLeft :: Name -> Subl Name -> VM (Subl Name)
-bindLeft name (Subl pre post out) = do
+bindLeft name (Subl pre post out) = 
+ --trace ("LOOK: " ++ sep name pre) $ do
+ do
   (pattern, head, tail) <- pair
   unify pattern pre
   unify name head
@@ -409,7 +421,7 @@ bindRight name (Subl pre post out) = do
 --bindRight name (Subl ls (x : xs) out) = do
 --  unify name x
 --  return $ Subl ls xs out
---bindRight a b = error $ "bindLeft. " ++ sep a b
+--bindRight a b = error $ "bindRight. " ++ sep a b
 
 -- TODO should be an `mplus` instead
 -- may diverge when stack is a Var
@@ -495,10 +507,16 @@ unifyProperty name prop = do
     Just link -> unify (object link) (object prop)
 
 unifyLeft :: Name -> Val Name -> Name -> Val Name -> VM ()
-unifyLeft n1 Var n2 Var =
+-- TODO cleaner way to do this?
+unifyLeft n1 Var n2 Var = do
   substitute n1 n2
+  put n1 (Ref n2)
 unifyLeft n1 Var _ v2 = do
   put n1 v2
+unifyLeft n1 (Ref n1') n2 v2 =
+  unify n1' n2
+unifyLeft n1 v1 n2 (Ref n2') =
+  unify n1 n2'
 unifyLeft n1 v1 n2 Var = unifyLeft n2 Var n1 v1
 unifyLeft n1 v1 n2 v2 = do
   assert (tagEq v1 v2) $ "tag mismatch:\n" ++
@@ -563,10 +581,10 @@ pop (Stack stack) = do
   put stack (Ptr tail)
   return head
 
-assertEmpty :: Stack -> VM ()
-assertEmpty stack = do
-  nil <- newStack
-  unify (stackName stack) (stackName nil)
+isEmpty :: Stack -> VM ()
+isEmpty (Stack stack) = do
+  Ptr s <- get stack
+  isNil s
 
 -- Context Management --
 -- The context lookup table is kept as a stack
@@ -596,7 +614,7 @@ startFrame s = store Frame >>= push s
 
 -- Top level parsing functions
 parseWord :: Stack -> Dict -> Word -> VM ()
-parseWord stack dict word = msum . map (handle) $ (mapMaybe ($ word) dict)
+parseWord stack dict word = msum . map handle . mapMaybe ($ word) $ dict
  where
   handle :: Rule -> VM ()
   handle rule = do
@@ -608,8 +626,8 @@ pushSubl :: Stack -> Subl Name -> VM ()
 -- Ambiguity
 pushSubl stack s@(Subl pre post out) = do
   isNil pre
-
   pushSub `mplus` pushOutput `mplus` bindTop
+
  where
    -- s is incomplete, push a Sub
    pushSub = do
@@ -675,6 +693,9 @@ matrixParse = match "matrix" matrixRule
 parenParse :: Parser
 parenParse = match "(" parenRule
 
+tupleParse :: Parser
+tupleParse = match "pair" tupleRule
+
 mainDictionary :: [Parser]
 mainDictionary = [
   -- basic nodes
@@ -688,7 +709,10 @@ mainDictionary = [
 
   -- grouping
   parenParse,
-    tokenParser ")"
+    tokenParser ")",
+
+  -- pairs
+  tupleParse
  ]
 
 -- Main Parser Functions --
@@ -704,7 +728,9 @@ tokenize = words . concatMap pad
 parse :: String -> VM Stack
 parse str =
   let stream = tokenize str in
-  do stack <- newVarStack
-     mapM_ (parseWord stack mainDictionary) stream
-     return stack
+  do 
+   stack <- newVarStack
+   --stack <- newStack
+   mapM_ (parseWord stack mainDictionary) stream
+   return stack
 
