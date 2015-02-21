@@ -22,7 +22,7 @@ import qualified Data.Map as M
 import Control.Monad
 import Control.Monad.State hiding (get, put)
 import qualified Control.Monad.State as S (get, put)
-import Control.Applicative ((<$>))
+import Control.Applicative ((<$>), (<*>))
 import Data.Maybe (fromJust, mapMaybe)
 import qualified Data.Traversable as T (Traversable, mapAccumR)
 import Data.Foldable (Foldable)
@@ -90,8 +90,8 @@ data Link a = Link
 
 -- "preconditions", "postconditions", resultant object
 data Subl a = Subl
-  { pre :: [a]
-  , post :: [a]
+  { pre :: a
+  , post :: a
   , output :: a
   }
  deriving (Eq, Ord, Show, Functor, Foldable, T.Traversable)
@@ -166,6 +166,20 @@ pair = do
  p <- store (Cons head tail)
  return (p, head, tail)
 
+isNil :: Name -> VM ()
+isNil n = do
+  nil <- store Nil
+  unify n nil
+
+singleton :: Name -> VM Name
+singleton name = store =<< (Cons name <$> (store Nil))
+
+storeList :: [Name] -> VM Name
+storeList [] = store Nil
+storeList (x : xs) = do
+  tail <- storeList xs
+  store $ Cons x tail
+
 -- Elementary Objects, Rules --
 type Rule = VM (Subl Name)
 
@@ -187,7 +201,8 @@ integerRule i = do
   (obj, val) <- integer
   lit <- store $ IntLit i
   unify val lit
-  return $ Subl {pre = [], post = [], output = obj}
+  nil <- store Nil
+  return $ Subl {pre = nil, post = nil, output = obj}
 
 matrix :: VM (Name, Name, Name)
 matrix = do
@@ -201,7 +216,9 @@ matrixRule = do
   (m, r, c) <- matrix
   by <- symbol "by"
   -- TODO parse `by` as a dimension object
-  return $ Subl {pre = [c, by, r], post = [], output = m}
+  pre <- storeList [c, by, r]
+  nil <- store Nil
+  return $ Subl {pre = pre, post = nil, output = m}
 
 -- Need a (internal) context object to put in the heap to bind names
 --   map from symbol (Tag) to Name
@@ -278,23 +295,54 @@ matrixRule = do
 --
 --     def *: m1 * m2 is a...
 --      still have to infer subl
+--      BUT otherwise, if * is already defined, we won't have
+--        a clear thing being defined.
 --
+--def Foo: a Foo is an integer.
+--  - so, this makes local context
+--  - adds Foo to it
+--  - unifies Foo with a Val with type type, because of 'a'
+--  - unifies the 'a' Val with a Val of type integer
+--  - then, we need to interpret 'a Foo' as a universal somewhow
+--    so that 
+--  - also need to record holes somehow
+--   i.e. in matrix product 
 --
 -- x is 22
--- A foo is an integer
+--  parse 22, assoc x to result
+-- A Foo is an integer
+--  parse "A Foo" (into val with type property = "Foo" (which points to
+--                   a Var through the context), and Foo 
+--                   getting type = type)
+--  then parse "an integer" (val with type property = integer)
+--  then unify? this would derive Foo = Integer
+-- Foo is integer
+-- a dimension is a pair of natural number
+-- x by y is the dimension (x, y)
+--
+-- def matrix: d matrix is a type
+--  where d is a dimension
+--
+-- the integer 22
+--
 --
 -- n <- integer
 -- subl [] [] n
 --
+-- "a" -> subl [] [type] (Val <-- "type" -- type)
+--
 --
 -- graph:
 --   
---   A graph is a pair (V, E)
+--   a graph is a pair (V, E)
 --   where
 --    V is a set, called the vertices.
 --    E is a set of pairs (v1, v2), called the edges.
 --      where
 --       v1 ∈ V and v2 ∈ E.
+--
+-- def list: T list is a type.
+--  where T is a type
 --
 
 mmulRule :: Rule
@@ -309,7 +357,10 @@ mmulRule = do
   unify rp r1
   unify cp c2
 
-  return $ Subl {pre = [m1], post = [m2], output = mp}
+  pre <- singleton m1
+  post <- singleton m2
+
+  return $ Subl {pre = pre, post = post, output = mp}
 
 imulRule :: Rule
 imulRule = do
@@ -317,38 +368,74 @@ imulRule = do
   (i2, _) <- integer
   (out, _) <- integer
 
-  return $ Subl {pre = [i1], post = [i2], output = out}
+  pre <- singleton i1
+  post <- singleton i2
+
+  return $ Subl {pre = pre, post = post, output = out}
 
 tokenRule :: Tag -> Rule
 tokenRule tag = do
   t <- store (Symbol tag)
-  return $ Subl {pre = [], post = [], output = t}
+  nil <- store Nil
+  return $ Subl {pre = nil, post = nil, output = t}
 
 parenRule :: Rule
 parenRule = do
   body <- var
   right <- symbol ")"
-  return $ Subl {pre = [], post = [body, right], output = body}
+  nil <- store Nil
+  post <- storeList [body, right]
+  return $ Subl {pre = nil, post = post, output = body}
 
 -- Rule Simplification
 bindLeft :: Name -> Subl Name -> VM (Subl Name)
-bindLeft name (Subl (x : xs) rs out) = do
-  unify name x
-  return $ Subl xs rs out
-bindLeft a b = error $ "bindLeft. " ++ sep a b
+bindLeft name (Subl pre post out) = do
+  (pattern, head, tail) <- pair
+  unify pattern pre
+  unify name head
+  return $ Subl tail post out
+
+--bindLeft name (Subl (x : xs) rs out) = do
+--  unify name x
+--  return $ Subl xs rs out
+--bindLeft a b = error $ "bindLeft. " ++ sep a b
 
 bindRight :: Name -> Subl Name -> VM (Subl Name)
-bindRight name (Subl ls (x : xs) out) = do
-  unify name x
-  return $ Subl ls xs out
-bindRight a b = error $ "bindLeft. " ++ sep a b
+bindRight name (Subl pre post out) = do
+  (pattern, head, tail) <- pair
+  unify pattern post
+  unify name head
+  return $ Subl pre tail out
+--bindRight name (Subl ls (x : xs) out) = do
+--  unify name x
+--  return $ Subl ls xs out
+--bindRight a b = error $ "bindLeft. " ++ sep a b
 
+-- TODO should be an `mplus` instead
+-- may diverge when stack is a Var
 reduceLeft :: Stack -> Subl Name -> VM (Subl Name)
-reduceLeft _ s@(Subl [] _ _) = return s
-reduceLeft stack sub = do
-  top <- pop stack
-  sub' <- bindLeft top sub
-  reduceLeft stack sub'
+reduceLeft stack s@(Subl pre _ _) = matchNil `mplus` matchCons
+ where
+   matchNil = do
+     isNil pre
+     return s
+   matchCons = do
+     top <- pop stack
+     s' <- bindLeft top s
+     reduceLeft stack s'
+--reduceLeft stack s@(Subl pre _ _) = do
+--  pval <- get pre
+--  case pval of
+--    Nil -> return s
+--    _ -> do
+--      top <- pop stack
+--      s' <- bindLeft top s
+--      reduceLeft stack s'
+--reduceLeft _ s@(Subl [] _ _) = return s
+--reduceLeft stack sub = do
+--  top <- pop stack
+--  sub' <- bindLeft top sub
+--  reduceLeft stack sub'
 
 -- Debugging
 debugFlag :: Bool
@@ -390,8 +477,8 @@ unifyProperties :: Name -> Name -> VM ()
 unifyProperties left right = do
   leftProps <- properties left
   rightProps <- properties right
-  mapM_ (\l -> unifyProperty left l) rightProps
-  mapM_ (\l -> unifyProperty right l) leftProps
+  mapM_ (unifyProperty left) rightProps
+  mapM_ (unifyProperty right) leftProps
 
 lookupWith :: Eq b => (a -> b) -> b -> [a] -> Maybe a
 lookupWith _ _ [] = Nothing
@@ -513,26 +600,48 @@ parseWord stack dict word = msum . map (handle) $ (mapMaybe ($ word) dict)
  where
   handle :: Rule -> VM ()
   handle rule = do
-    s <- rule
+    s  <- rule
     s' <- reduceLeft stack s
-    pushSub stack s'
+    pushSubl stack s'
 
-pushSub :: Stack -> Subl Name -> VM ()
+pushSubl :: Stack -> Subl Name -> VM ()
 -- Ambiguity
-pushSub stack (Subl [] [] n) = pushTop `mplus` bindTop
-  where
-    pushTop = push stack n
+pushSubl stack s@(Subl pre post out) = do
+  isNil pre
 
-    bindTop = do
-      top <- pop stack
-      Sub s <- get top
-      s' <- bindRight n s
-      pushSub stack s'
-pushSub stack s@(Subl [] _ _) = do
-  top <- store $ Sub s
-  push stack top
--- pushSub has been misused; called on Subl term with preconditions remaining
-pushSub _ s = assert False $ "pushSub. " ++ show s
+  pushSub `mplus` pushOutput `mplus` bindTop
+ where
+   -- s is incomplete, push a Sub
+   pushSub = do
+     (c, _, _) <- pair
+     unify post c
+     push stack =<< store (Sub s)
+   -- s is complete, push the output
+   pushOutput = do
+     isNil post
+     push stack out
+   -- s is complete, bind it to the top Sub
+   bindTop = do
+     isNil post
+     top <- pop stack
+     Sub s <- get top
+     s' <- bindRight out s
+     pushSubl stack s'
+
+--pushSubl stack (Subl [] [] n) = pushTop `mplus` bindTop
+--  where
+--    pushTop = push stack n
+--
+--    bindTop = do
+--      top <- pop stack
+--      Sub s <- get top
+--      s' <- bindRight n s
+--      pushSubl stack s'
+--pushSubl stack s@(Subl [] _ _) = do
+--  top <- store $ Sub s
+--  push stack top
+-- pushSubl has been misused; called on Subl term with preconditions remaining
+--pushSubl _ s = assert False $ "pushSubl. " ++ show s
 
 -- Basic Parsers
 type Word = String
