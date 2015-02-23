@@ -1,20 +1,21 @@
 -- TODO
---  add nil check for initial parse-stack/context variables
+--  !!
+--  use context to resolve words
+--  fix symbolParse
+--  implement ∎
+--  !!
 --
 --  print output graph
 --    and especially: the context stack
 --
 --  split up this file
+--  use Condition monad
 --  web client
 --  better factoring for rule vs parser split?
---  need a way to distinguish failed traces (they should return some symbol)
---    and a way to interact with them. (EitherT?)
 --  make Ptrs immutable? need to add an 'Update' Val, cache object?
 --  better syntax for specifing unification patterns
+--    see: isNil, isCons
 --
--- definitions:
---  define rule for rule parsing
---  special 'is' rule to enter a non-immediate mode, add rule to dictionary
 {-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
 module See.Types where
 
@@ -30,7 +31,6 @@ import Text.Read (readMaybe)
 import Debug.Trace (trace)
 
 -- Environment stuff
--- TODO merge with Name package
 newtype Name = N Integer
  deriving (Eq, Ord)
 
@@ -92,15 +92,20 @@ data Link a = Link
 data Subl a = Subl
   { pre :: a
   , post :: a
-  , output :: a
+  , output :: Command a
   }
+ deriving (Eq, Ord, Show, Functor, Foldable, T.Traversable)
+
+data Command a
+  = Push a | DoSub (Subl a)
+  | CreateFrame a | CloseFrame
  deriving (Eq, Ord, Show, Functor, Foldable, T.Traversable)
 
 -- Core datatype
 data Val a
   = Var
   | Ref Name
-  | Val Tag [a]
+  | Val Tag
   | Prop (Link a)
   | Sub (Subl a)
   -- Stacks are basic
@@ -112,11 +117,15 @@ data Val a
   | Symbol Tag
   -- Contexts
   | Binding Tag a
-  | Frame
+  | Frame (Maybe Tag) a a -- parse stack, environment stack, special word
  deriving (Eq, Ord, Show, Functor, Foldable, T.Traversable)
 
 -- This Name should point to a Ptr value
 newtype Stack = Stack Name
+  deriving (Show, Eq, Ord)
+
+-- Should be a stack of stacks
+newtype Context = Context Stack
   deriving (Show, Eq, Ord)
 
 -- Primary monad type
@@ -157,29 +166,38 @@ setProperty name tag val = do
   p <- getProperty name tag
   unify p val
 
-symbol :: Tag -> VM Name
-symbol tag = store (Symbol tag)
-
-pair :: VM (Name, Name, Name)
-pair = do
- head <- var
- tail <- var
- p <- store (Cons head tail)
- return (p, head, tail)
-
 isNil :: Name -> VM ()
 isNil n = do
   nil <- store Nil
   unify n nil
 
-singleton :: Name -> VM Name
-singleton name = store =<< (Cons name <$> (store Nil))
+isCons:: Name -> VM (Name, Name)
+isCons n = do
+ head <- var
+ tail <- var
+ pattern <- store (Cons head tail)
+ unify n pattern
+ return (head, tail)
+
+isBinding :: Tag -> Name -> VM Name
+isBinding tag n = do
+  value <- var
+  binding <- store (Binding tag value)
+  unify n binding
+  return value
 
 storeList :: [Name] -> VM Name
 storeList [] = store Nil
 storeList (x : xs) = do
   tail <- storeList xs
   store $ Cons x tail
+
+sublVar :: VM Name
+sublVar = do
+  pre <- var
+  post <- var
+  out <- var
+  store $ Sub (Subl {pre = pre, post = post, output = Push out})
 
 -- Elementary Objects, Rules --
 type Rule = VM (Subl Name)
@@ -193,9 +211,26 @@ type Rule = VM (Subl Name)
 
 integer :: VM (Name, Name)
 integer = do
-  i <- store (Val "integer" [])
+  i <- store (Val "integer")
   val <- property i "value"
   return (i, val)
+
+-- TODO add integer constraint
+matrix :: VM (Name, Name, Name)
+matrix = do
+  m <- store (Val "matrix")
+  rows <- property m "rows"
+  columns <- property m "columns"
+  return (m, rows, columns)
+
+symbol :: VM (Name, Name)
+symbol = do
+  s <- store (Val "symbol")
+  val <- property s "value"
+  return (s, val)
+
+symbolLit :: Tag -> VM Name
+symbolLit tag = store (Symbol tag)
 
 integerRule :: Integer -> Rule
 integerRule i = do
@@ -203,157 +238,43 @@ integerRule i = do
   lit <- store $ IntLit i
   unify val lit
   nil <- store Nil
-  return $ Subl {pre = nil, post = nil, output = obj}
+  return $ Subl {pre = nil, post = nil, output = Push obj}
 
-matrix :: VM (Name, Name, Name)
-matrix = do
-  m <- store (Val "matrix" [])
-  rows <- property m "rows"
-  columns <- property m "columns"
-  return (m, rows, columns)
+symbolRule :: Tag -> Rule
+symbolRule tag = do
+  (obj, val) <- symbol
+  lit <- symbolLit tag
+  unify val lit
+  nil <- store Nil
+  return $ Subl {pre = nil, post = nil, output = Push obj}
+
+tokenRule :: Tag -> Rule
+tokenRule tag = do
+  lit <- symbolLit tag
+  nil <- store Nil
+  return $ Subl {pre = nil, post = nil, output = Push lit}
 
 matrixRule :: Rule
 matrixRule = do
   (m, r, c) <- matrix
-  by <- symbol "by"
+  by <- symbolLit "by"
   -- TODO parse `by` as a dimension object
   pre <- storeList [c, by, r]
   nil <- store Nil
-  return $ Subl {pre = pre, post = nil, output = m}
+  return $ Subl {pre = pre, post = nil, output = Push m}
 
 tupleRule :: Rule
 tupleRule = do
-  (a, _) <- integer
-  (b, _) <- integer
+  a <- var
+  b <- var
   pre <- storeList [b, a]
   post <- store Nil
-  out <- storeList [a,b]
-  return $ Subl {pre = pre, post = post, output = out}
-
--- Need a (internal) context object to put in the heap to bind names
---   map from symbol (Tag) to Name
---
---   do we also need an internal context for rules?
--- 
--- The context object is used to lookup symbols; the resulting graph
---   objects do not refer to context names
---
--- Rules return a Subl. now they also return binding list?
---
--- Let: 
---   'Let' _name_ 'be' 'a' _node_. _obj_ ∎
---   ∎ terminates a definition; it clears the context
---   or: let creates a local context
---
--- how are new defs stored?
---
--- a:
---   'a' _obj_ -> _obj_
---
---
--- how about a context node creator:
---   '→' _ '∎'
--- inside we have a local context, and then ∎ pushes a def (some canonical part
--- of this context) to the outer context
--- so we could nest these possibly
--- 
---
--- matrix product:
---   Let m1 be a r × i matrix and m2 be a i × c matrix.
---   The product of m1 and m2 is a r × c matrix denoted by m1 * m2.
---
---   - or, simpler: -
---
---   let m1 ... m2 ...
---   def: m1 * m2 is a r × c matrix.
---
---
---   def m1 * m2 is a r × c matrix
---    where
---     m1 is a ...
---     m2 is a ...
---   ∎ 
---
---   we need 
---     m1 * m2 ---> "*" -> object graph + Subl [m1] [m2] _m
---
---     for this I think we need Subl unification
---     need to search for a term that closes the parse stack
---
---     e.g.
---       a _*_ b      - [matrix] [matrix]
---       a _foo_      - [] []
---       a _red_ bar  - [] [thing]
---
---       each have different subl types
---
---
---    so stack has ptrs to vars on it
---    context maps names to these vars
---    unification can happen through this context
---    eventually stack gets resolved except for one term hopefully
---
---    then there's probably a heuristic for solving term.
---    or we could objectify the pushSub method?
---
---    is has pattern like ( _lhs_ is _rhs_ )
---    finishing is triggers this thing just described, 
---     to solve the lhs,
---     and the output of the subl is the rhs.
---
---    simpler:
---
---     def *: m1 * m2 is a...
---      still have to infer subl
---      BUT otherwise, if * is already defined, we won't have
---        a clear thing being defined.
---
---def Foo: a Foo is an integer.
---  - so, this makes local context
---  - adds Foo to it
---  - unifies Foo with a Val with type type, because of 'a'
---  - unifies the 'a' Val with a Val of type integer
---  - then, we need to interpret 'a Foo' as a universal somewhow
---    so that 
---  - also need to record holes somehow
---   i.e. in matrix product 
---
--- x is 22
---  parse 22, assoc x to result
--- A Foo is an integer
---  parse "A Foo" (into val with type property = "Foo" (which points to
---                   a Var through the context), and Foo 
---                   getting type = type)
---  then parse "an integer" (val with type property = integer)
---  then unify? this would derive Foo = Integer
--- Foo is integer
--- a dimension is a pair of natural number
--- x by y is the dimension (x, y)
---
--- def matrix: d matrix is a type
---  where d is a dimension
---
--- the integer 22
---
---
--- n <- integer
--- subl [] [] n
---
--- "a" -> subl [] [type] (Val <-- "type" -- type)
---
---
--- graph:
---   
---   a graph is a pair (V, E)
---   where
---    V is a set, called the vertices.
---    E is a set of pairs (v1, v2), called the edges.
---      where
---       v1 ∈ V and v2 ∈ E.
---
--- def list: T list is a type.
---  where T is a type
---
+  out <- store (Val "pair")
+  first <- property out "first"
+  second <- property out "second"
+  unify a first
+  unify b second
+  return $ Subl {pre = pre, post = post, output = Push out}
 
 mmulRule :: Rule
 mmulRule = do
@@ -367,10 +288,10 @@ mmulRule = do
   unify rp r1
   unify cp c2
 
-  pre <- singleton m1
-  post <- singleton m2
+  pre <- storeList [m1]
+  post <- storeList [m2]
 
-  return $ Subl {pre = pre, post = post, output = mp}
+  return $ Subl {pre = pre, post = post, output = Push mp}
 
 imulRule :: Rule
 imulRule = do
@@ -378,35 +299,55 @@ imulRule = do
   (i2, _) <- integer
   (out, _) <- integer
 
-  pre <- singleton i1
-  post <- singleton i2
+  pre <- storeList [i1]
+  post <- storeList [i2]
 
-  return $ Subl {pre = pre, post = post, output = out}
+  return $ Subl {pre = pre, post = post, output = Push out}
 
-tokenRule :: Tag -> Rule
-tokenRule tag = do
-  t <- store (Symbol tag)
-  nil <- store Nil
-  return $ Subl {pre = nil, post = nil, output = t}
+--tokenRule :: Tag -> Rule
+--tokenRule tag = do
+--  (s, val) <- symbol
+--  t <- symbolLit tag
+--  unify val t
+--  nil <- store Nil
+--  return $ Subl {pre = nil, post = nil, output = Push s}
 
+-- TODO make this right-biased; should reduce unnecessary ambiguity
 parenRule :: Rule
 parenRule = do
   body <- var
-  right <- symbol ")"
+  right <- symbolLit ")"
   nil <- store Nil
   post <- storeList [body, right]
-  return $ Subl {pre = nil, post = post, output = body}
+  return $ Subl {pre = nil, post = post, output = Push body}
+
+-- def _sym_ : -> push context, push empty stack
+-- ∎ -> pop context, pop stack, resolve _sym_, insert into context
+-- need to add new case to Subl type, or wrap it
+definitionRule :: Rule
+definitionRule = do
+  (s, val) <- symbol
+
+  pre <- storeList []
+  marker <- symbolLit ":"
+  post <- storeList [s, marker]
+
+  return $ Subl {pre = pre, post = post, output = CreateFrame val}
+
+qedRule :: Rule
+qedRule = do
+  nil <- store Nil
+  return $ Subl {pre = nil, post = nil, output = CloseFrame}
 
 -- Rule Simplification
+-- TODO remove dead code, or use it to optimize?
 bindLeft :: Name -> Subl Name -> VM (Subl Name)
 bindLeft name (Subl pre post out) = 
  --trace ("LOOK: " ++ sep name pre) $ do
  do
-  (pattern, head, tail) <- pair
-  unify pattern pre
+  (head, tail) <- isCons pre
   unify name head
   return $ Subl tail post out
-
 --bindLeft name (Subl (x : xs) rs out) = do
 --  unify name x
 --  return $ Subl xs rs out
@@ -414,8 +355,7 @@ bindLeft name (Subl pre post out) =
 
 bindRight :: Name -> Subl Name -> VM (Subl Name)
 bindRight name (Subl pre post out) = do
-  (pattern, head, tail) <- pair
-  unify pattern post
+  (head, tail) <- isCons post
   unify name head
   return $ Subl pre tail out
 --bindRight name (Subl ls (x : xs) out) = do
@@ -423,8 +363,7 @@ bindRight name (Subl pre post out) = do
 --  return $ Subl ls xs out
 --bindRight a b = error $ "bindRight. " ++ sep a b
 
--- TODO should be an `mplus` instead
--- may diverge when stack is a Var
+-- TODO may diverge when stack is a Var
 reduceLeft :: Stack -> Subl Name -> VM (Subl Name)
 reduceLeft stack s@(Subl pre _ _) = matchNil `mplus` matchCons
  where
@@ -513,9 +452,9 @@ unifyLeft n1 Var n2 Var = do
   put n1 (Ref n2)
 unifyLeft n1 Var _ v2 = do
   put n1 v2
-unifyLeft n1 (Ref n1') n2 v2 =
+unifyLeft _ (Ref n1') n2 _ =
   unify n1' n2
-unifyLeft n1 v1 n2 (Ref n2') =
+unifyLeft n1 _ _ (Ref n2') =
   unify n1 n2'
 unifyLeft n1 v1 n2 Var = unifyLeft n2 Var n1 v1
 unifyLeft n1 v1 n2 v2 = do
@@ -530,6 +469,7 @@ unifyMany n1 n2 = do
   sequence_ $ zipWith unify n1 n2
 
 -- Needed when we unify two Vars together
+-- Doesn't have to be recursive
 substitute :: Name -> Name -> VM ()
 substitute old new = do
   modifyAll subChildren
@@ -576,10 +516,25 @@ push (Stack stack) head = do
 pop :: Stack -> VM Name
 pop (Stack stack) = do
   Ptr list <- get stack
-  (p, head, tail) <- pair
-  unify list p
+  (head, tail) <- isCons list
   put stack (Ptr tail)
   return head
+
+top :: Stack -> VM Name
+top (Stack stack) = do
+  Ptr list <- get stack
+  (head, _) <- isCons list
+  return head
+
+topStack :: Context -> VM Stack
+topStack (Context s) = do
+  Frame _ s _ <- get =<< top s
+  return (Stack s)
+
+topEnv :: Context -> VM Stack
+topEnv (Context s) = do
+  Frame _ _ e <- get =<< top s
+  return (Stack e)
 
 isEmpty :: Stack -> VM ()
 isEmpty (Stack stack) = do
@@ -588,80 +543,120 @@ isEmpty (Stack stack) = do
 
 -- Context Management --
 -- The context lookup table is kept as a stack
+newFrame :: Maybe Tag -> Context -> VM (Stack, Stack)
+newFrame mtag (Context s) = do
+  Stack stack <- newStack
+  Stack env <- newStack
+  frame <- store (Frame mtag stack env)
+  push s frame
+  return (Stack stack, Stack env)
+
+initialContext :: VM Context
+initialContext = do
+  s <- newStack
+  let c = Context s
+  _ <- newFrame Nothing c
+  return c
+
+
 pushBinding :: Stack -> Tag -> Name -> VM ()
 pushBinding stack tag name = do
   store (Binding tag name) >>= push stack
 
+newBinding :: Context -> Tag -> Name -> VM ()
+newBinding context tag name = do
+  e <- topEnv context
+  pushBinding e tag name
+
+-- TODO
+-- currently this keeps looking after a match is found,
+-- which may be desirable to maximize ambiguity 
+--
+-- we could change it to 
+--   matchHead `mplus` (not matchHead >> matchTail)
+--   or do an explicit match on the tag of the first element
 lookupBinding :: Name -> Tag -> VM Name
 lookupBinding context tag = matchHead `mplus` matchTail
  where
    -- This handles the case that context is a Var
    matchHead = do
-     valVar <- var
-     tailVar <- var
-     bpattern <- store $ Binding tag valVar
-     cpattern <- store $ Cons bpattern tailVar
-     unify context cpattern
-     return valVar
+     (head, _) <- isCons context
+
+     value <- isBinding tag head
+     return value
+
    -- Don't use unify to avoid unbounded recursion when context is a Var
    matchTail = do
+     -- TODO use case to avoid 'fail'? -- although,
+     --   might be nice to avoid cluttering tree with end-of-context Lefts
      Cons _ tail <- get context
      lookupBinding tail tag
 
-startFrame :: Stack -> VM ()
-startFrame s = store Frame >>= push s 
-     
-
 -- Top level parsing functions
-parseWord :: Stack -> Dict -> Word -> VM ()
-parseWord stack dict word = msum . map handle . mapMaybe ($ word) $ dict
- where
-  handle :: Rule -> VM ()
-  handle rule = do
-    s  <- rule
-    s' <- reduceLeft stack s
-    pushSubl stack s'
+parseWord :: Context -> Dict -> Word -> VM ()
+parseWord context dict word = do
+  stack <- topStack context
+  let step r = reduceSubl stack r >>= unfoldCommand context
+  msum . map (step =<<) 
+       . mapMaybe ($ word) $ dict
 
-pushSubl :: Stack -> Subl Name -> VM ()
--- Ambiguity
-pushSubl stack s@(Subl pre post out) = do
+
+unfoldCommand :: Context -> Maybe (Command Name) -> VM ()
+unfoldCommand _ Nothing = return ()
+unfoldCommand context (Just command) = do
+  stack <- topStack context
+  mc <- case command of
+          DoSub s -> reduceSubl stack s
+          Push s ->
+            (push stack s >> return Nothing)
+              `mplus`
+            (Just . DoSub <$> bindTop stack s)
+          CreateFrame sym -> do
+            Symbol tag <- get sym
+            _ <- newFrame (Just tag) context
+            v <- sublVar
+            newBinding context tag v
+            return Nothing
+          CloseFrame -> do
+            let Context stack = context
+            -- Resolve stack, pull mtag out of env, bind it
+            Frame mtag stack env <- get =<< pop stack
+            -- TODO resolve stack
+            case mtag of
+              Nothing -> return Nothing
+              -- Insert binding into higher environment
+              Just tag -> do
+                -- TODO clean this up
+                Ptr list <- get env
+                val <- lookupBinding list tag
+                newBinding context tag val
+                return Nothing
+
+  unfoldCommand context mc
+
+reduceSubl :: Stack -> Subl Name -> VM (Maybe (Command Name))
+reduceSubl stack s = do
+  s'@(Subl pre _ _) <- reduceLeft stack s
   isNil pre
-  pushSub `mplus` pushOutput `mplus` bindTop
-
+  incomplete s' `mplus` complete s'
  where
-   -- s is incomplete, push a Sub
-   pushSub = do
-     (c, _, _) <- pair
-     unify post c
-     push stack =<< store (Sub s)
-   -- s is complete, push the output
-   pushOutput = do
+   complete (Subl _ post out) = do
      isNil post
-     push stack out
-   -- s is complete, bind it to the top Sub
-   bindTop = do
-     isNil post
-     top <- pop stack
-     Sub s <- get top
-     s' <- bindRight out s
-     pushSubl stack s'
+     return $ Just out
+   incomplete s@(Subl _ post out) = do
+     (_, _) <- isCons post
+     sub <- store (Sub s)
+     push stack sub
+     return Nothing
 
---pushSubl stack (Subl [] [] n) = pushTop `mplus` bindTop
---  where
---    pushTop = push stack n
---
---    bindTop = do
---      top <- pop stack
---      Sub s <- get top
---      s' <- bindRight n s
---      pushSubl stack s'
---pushSubl stack s@(Subl [] _ _) = do
---  top <- store $ Sub s
---  push stack top
--- pushSubl has been misused; called on Subl term with preconditions remaining
---pushSubl _ s = assert False $ "pushSubl. " ++ show s
 
--- Basic Parsers
+bindTop :: Stack -> Name -> VM (Subl Name)
+bindTop stack n = do
+  Sub s <- get =<< pop stack
+  bindRight n s
+
+
+-- Basic Parsers --
 type Word = String
 type Parser = Word -> Maybe Rule
 type Dict = [Parser]
@@ -684,8 +679,8 @@ mmulParse = match "*" mmulRule
 imulParse :: Parser
 imulParse = match "*" imulRule
 
-tokenParser :: String -> Parser
-tokenParser model = match model (tokenRule model)
+tokenParse :: String -> Parser
+tokenParse model = match model (tokenRule model)
 
 matrixParse :: Parser
 matrixParse = match "matrix" matrixRule
@@ -696,12 +691,19 @@ parenParse = match "(" parenRule
 tupleParse :: Parser
 tupleParse = match "pair" tupleRule
 
+definitionParse :: Parser
+definitionParse = match "def" definitionRule
+
+-- Matches anything
+symbolParse :: Parser
+symbolParse sym = Just (symbolRule sym)
+
 mainDictionary :: [Parser]
 mainDictionary = [
   -- basic nodes
   intParse,
   matrixParse,
-    tokenParser "by",
+    tokenParse "by",
 
   -- match "*"
   imulParse,
@@ -709,10 +711,15 @@ mainDictionary = [
 
   -- grouping
   parenParse,
-    tokenParser ")",
+    tokenParse ")",
 
   -- pairs
-  tupleParse
+  tupleParse,
+
+  -- DEFINITIONS
+  symbolParse,
+  tokenParse ":",
+  definitionParse
  ]
 
 -- Main Parser Functions --
@@ -725,12 +732,13 @@ tokenize = words . concatMap pad
    pad x = [x]
 
 -- Returns parse stack
-parse :: String -> VM Stack
+parse :: String -> VM Context
 parse str =
   let stream = tokenize str in
   do 
-   stack <- newVarStack
+   context <- initialContext
+   --stack <- newVarStack
    --stack <- newStack
-   mapM_ (parseWord stack mainDictionary) stream
-   return stack
+   mapM_ (parseWord context mainDictionary) stream
+   return context
 

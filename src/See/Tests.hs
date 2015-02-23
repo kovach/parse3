@@ -4,15 +4,18 @@ import qualified Data.Map as M
 
 -- Testing
 main :: String -> IO ()
-main = main' True
-main' :: Bool -> String -> IO ()
-main' closed str = chk $ do
-  stack <- parse str
+main = main_ True
+main' :: String -> IO ()
+main' = main_ False
+main_ :: Bool -> String -> IO ()
+main_ closed str = chk $ do
+  context <- parse str
   -- get result
 
   -- If closed is true, parsing will fail unless stack contains exactly one
   -- element
   if closed then do
+    stack <- topStack context
     val <- pop stack
     isEmpty stack 
     return (Just val) else
@@ -34,15 +37,15 @@ chk m =
 
 
 p0 = var >> var
-p1, p2, p4, p5 :: VM ()
+p1, p2, p4 :: VM ()
 p1 = do
- x <- symbol "x"
- y <- symbol "y"
+ x <- symbolLit "x"
+ y <- symbolLit "y"
  unify x y
  return ()
 p2 = do
- x <- symbol "x"
- y <- symbol "x"
+ x <- symbolLit "x"
+ y <- symbolLit "x"
  z <- var
  unify x y
  unify y z
@@ -58,22 +61,18 @@ p4 = do
   _ <- pop stack
   return ()
 
-p5 = do
-  Subl _ _ i1 <- integerRule 2
-  Subl _ _ i2 <- integerRule 3
-  return ()
-  unify i1 i2
-
 twopair = do
-  (p1, h1, t1) <- pair
-  (p2, h2, t2) <- pair
+  p1 <- var
+  p2 <- var
+  (h1, t1) <- isCons p1
+  (h2, t2) <- isCons p2
   unify p1 p2
   return h1
 pp :: VM Name
 pp = do
   h1 <- twopair
   num <- store $ IntLit 22
-  v <- singleton num
+  v <- storeList [num]
   --num' <- store $ IntLit 23
   --v' <- singleton num
   unify h1 v
@@ -87,3 +86,4 @@ p7 = do
 
 -- returns 2 results (two ways to assoc), both 2 by 5
 p6 = main "2 by 3 matrix * 3 by 4 matrix * 4 by 5 matrix"
+
