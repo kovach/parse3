@@ -14,6 +14,7 @@ import Text.Read (readMaybe)
 import Debug.Trace (trace)
 
 -- Environment stuff
+-- TODO move to Monad.Condition
 newtype Name = N Integer
  deriving (Eq, Ord)
 
@@ -119,6 +120,12 @@ type VM = UM (Val Name)
 ------------------------
 -- End Core Structure --
 ------------------------
+
+type Rule = VM (Subl Name)
+
+type Word = String
+type Parser = Word -> Maybe Rule
+type Dict = [Parser]
 
 -- Tree utilities
 tagEq :: (Functor f, Eq (f ())) => f a -> f a -> Bool

@@ -1,5 +1,6 @@
 module See.Tests where
 import See.Types
+import See.Primitives
 import See.Parse
 import See.Definition
 import qualified Data.Map as M

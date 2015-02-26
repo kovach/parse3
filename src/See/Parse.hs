@@ -1,19 +1,16 @@
 -- TODO
---  !!
---  use context to resolve words
---  implement ∎
---  !!
+-- !!
+-- unification vars/Ref/Prop interaction is not right
+-- !!
 --
---  print output graph
---    and especially: the context stack
+-- print output graph
+--   and especially: the context stack
 --
---  split up this file
---  use Condition monad
---  web client
---  better factoring for rule vs parser split?
---  make Ptrs immutable? need to add an 'Update' Val, cache object?
---  better syntax for specifing unification patterns
---    see: isNil, isCons
+-- organize files
+-- use Condition monad
+-- web client
+-- better factoring for rule vs parser split?
+-- make Ptrs immutable? need to add an 'Update' Val, cache object?
 --
 module See.Parse where
 import See.Types
@@ -60,6 +57,20 @@ isVal name = do
     IntLit _ -> return ()
     _ -> mzero
 
+sublVar :: VM Name
+sublVar = do
+  pre <- var
+  post <- var
+  out <- var
+  store $ Sub (Subl {pre = pre, post = post, output = Push out})
+
+storeList :: [Name] -> VM Name
+storeList [] = store Nil
+storeList (x : xs) = do
+  tail <- storeList xs
+  store $ Cons x tail
+
+-- Deconstruction --
 isNil :: Name -> VM ()
 isNil n = do
   nil <- store Nil
@@ -80,21 +91,6 @@ isBinding tag n = do
   unify n binding
   return value
 
-storeList :: [Name] -> VM Name
-storeList [] = store Nil
-storeList (x : xs) = do
-  tail <- storeList xs
-  store $ Cons x tail
-
-sublVar :: VM Name
-sublVar = do
-  pre <- var
-  post <- var
-  out <- var
-  store $ Sub (Subl {pre = pre, post = post, output = Push out})
-
--- Elementary Objects, Rules --
-type Rule = VM (Subl Name)
 
 -- Current pattern:
 --  an object type is a VM action that returns a tuple of Names
@@ -128,78 +124,6 @@ symbol = do
 symbolLit :: Tag -> VM Name
 symbolLit tag = store (Symbol tag)
 
-integerRule :: Integer -> Rule
-integerRule i = do
-  (obj, val) <- integer
-  lit <- store $ IntLit i
-  unify val lit
-  nil <- store Nil
-  return $ Subl {pre = nil, post = nil, output = Push obj}
-
-symbolRule :: Tag -> Rule
-symbolRule tag = do
-  (obj, val) <- symbol
-  lit <- symbolLit tag
-  unify val lit
-  nil <- store Nil
-  return $ Subl {pre = nil, post = nil, output = Push obj}
-
-tokenRule :: Tag -> Rule
-tokenRule tag = do
-  lit <- symbolLit tag
-  nil <- store Nil
-  return $ Subl {pre = nil, post = nil, output = Push lit}
-
-matrixRule :: Rule
-matrixRule = do
-  (m, r, c) <- matrix
-  by <- symbolLit "by"
-  -- TODO parse `by` as a dimension object
-  pre <- storeList [c, by, r]
-  nil <- store Nil
-  return $ Subl {pre = pre, post = nil, output = Push m}
-
-tupleRule :: Rule
-tupleRule = do
-  a <- var
-  b <- var
-  pre <- storeList [b, a]
-  post <- store Nil
-  out <- store (Val "pair")
-  first <- property out "first"
-  second <- property out "second"
-  unify a first
-  unify b second
-  return $ Subl {pre = pre, post = post, output = Push out}
-
-mmulRule :: Rule
-mmulRule = do
-  -- Left, Right inputs
-  (m1, r1, c1) <- matrix
-  (m2, r2, c2) <- matrix
-  -- Product matrix
-  (mp, rp, cp) <- matrix
-
-  unify c1 r2
-  unify rp r1
-  unify cp c2
-
-  pre <- storeList [m1]
-  post <- storeList [m2]
-
-  return $ Subl {pre = pre, post = post, output = Push mp}
-
-imulRule :: Rule
-imulRule = do
-  (i1, _) <- integer
-  (i2, _) <- integer
-  (out, _) <- integer
-
-  pre <- storeList [i1]
-  post <- storeList [i2]
-
-  return $ Subl {pre = pre, post = post, output = Push out}
-
 --tokenRule :: Tag -> Rule
 --tokenRule tag = do
 --  (s, val) <- symbol
@@ -207,41 +131,6 @@ imulRule = do
 --  unify val t
 --  nil <- store Nil
 --  return $ Subl {pre = nil, post = nil, output = Push s}
-
--- TODO make this right-biased; should reduce unnecessary ambiguity
-parenRule :: Rule
-parenRule = do
-  body <- var
-  right <- symbolLit ")"
-  nil <- store Nil
-  post <- storeList [body, right]
-  return $ Subl {pre = nil, post = post, output = Push body}
-
--- def _sym_ : -> push context, push empty stack
--- ∎ -> pop context, pop stack, resolve _sym_, insert into context
--- need to add new case to Subl type, or wrap it
-definitionRule :: Rule
-definitionRule = do
-  (s, val) <- symbol
-
-  pre <- storeList []
-  marker <- symbolLit ":"
-  post <- storeList [s, marker]
-
-  return $ Subl {pre = pre, post = post, output = CreateFrame val}
-
-qedRule :: Rule
-qedRule = do
-  nil <- store Nil
-  return $ Subl {pre = nil, post = nil, output = CloseFrame}
-
--- syntactic pop
-popRule :: Rule
-popRule = do
-  nil <- store Nil
-  getlost <- var
-  pre <- storeList [getlost]
-  return $ Subl {pre = pre, post = nil, output = DoNothing}
 
 -- Rule Simplification
 -- TODO remove dead code, or use it to optimize?
@@ -504,9 +393,19 @@ lookupBinding' context tag = matchHead `mplus` matchTail
 parseBinding :: Stack -> Tag -> VM (Subl Name)
 parseBinding env tag = do
   Sub s <- get =<< lookupBinding env tag
-  trace ("LOOK: " ++ show s) $ return s
+  return s
 
--- Top level parsing functions
+-- Top level parsing functions --
+
+-- Default parser, in case no proper rule matches
+symbolRule :: Tag -> Rule
+symbolRule tag = do
+  (obj, val) <- symbol
+  lit <- symbolLit tag
+  unify val lit
+  nil <- store Nil
+  return $ Subl {pre = nil, post = nil, output = Push obj}
+
 parseWord :: Context -> Dict -> Word -> VM ()
 parseWord context dict word = do
   stack <- topStack context
@@ -577,94 +476,4 @@ bindTop stack n = do
   bindRight n s
 
 
--- Basic Parsers --
-type Word = String
-type Parser = Word -> Maybe Rule
-type Dict = [Parser]
-
-readInt :: String -> Maybe Integer
-readInt = readMaybe
-
-match :: String -> Rule -> Parser
-match model rule str | model == str = Just rule
-match _ _ _ = Nothing
-
-intParse :: Parser
-intParse word = do
-  i <- readInt word
-  return (integerRule i)
-
-mmulParse :: Parser
-mmulParse = match "*" mmulRule
-
-imulParse :: Parser
-imulParse = match "*" imulRule
-
-tokenParse :: String -> Parser
-tokenParse model = match model (tokenRule model)
-
-matrixParse :: Parser
-matrixParse = match "matrix" matrixRule
-
-parenParse :: Parser
-parenParse = match "(" parenRule
-
-tupleParse :: Parser
-tupleParse = match "pair" tupleRule
-
-definitionParse :: Parser
-definitionParse = match "def" definitionRule
-
--- Matches anything
-symbolParse :: Parser
-symbolParse sym = Just (symbolRule sym)
-
-mainDictionary :: [Parser]
-mainDictionary = [
-  -- Stuff
-  match "pop" popRule,
-
-  -- basic nodes
-  intParse,
-  matrixParse,
-    tokenParse "by",
-
-  -- match "*"
-  imulParse,
-  mmulParse,
-
-  -- grouping
-  parenParse,
-    tokenParse ")",
-
-  -- pairs
-  tupleParse,
-
-  -- DEFINITIONS
-  tokenParse ":",
-  match "qed" qedRule,
-  definitionParse
-
- ]
-
--- Main Parser Functions --
--- Special handling of '(' , ')'
-tokenize :: String -> [String]
-tokenize = words . concatMap pad
- where
-   pad '(' = " ( "
-   pad ')' = " ) "
-   pad ':' = " : "
-   pad x = [x]
-
--- Returns parse stack
-parse :: String -> VM Context
-parse str =
-  let stream = tokenize str in
-  do 
-   context <- initialContext
-   --stack <- newVarStack
-   --stack <- newStack
-   mapM_ (parseWord context mainDictionary) stream
-   return context
 
