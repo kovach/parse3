@@ -1,5 +1,7 @@
 module See.Tests where
 import See.Types
+import See.Parse
+import See.Definition
 import qualified Data.Map as M
 
 -- Testing
@@ -21,6 +23,32 @@ main_ closed str = chk $ do
     return (Just val) else
     return Nothing
 
+  --let Context c = context
+  --str <- printVal $ stackName c
+  --return (Just str)
+
+
+printVal n = do
+  val <- get n
+  case val of
+    Ptr n -> printStack n
+    _ -> return $ show val
+
+printStack s = do
+  list <- get s
+  case list of
+    Var -> return "VAR"
+    Nil -> return "."
+    Cons x xs -> do
+      s1 <- printVal x
+      s2 <- printVal xs
+      return (s1 ++ "\n" ++ s2)
+    _ -> error (show list)
+
+  
+
+           
+
 chk :: Show a => VM a -> IO ()
 chk m =
   let worlds = runUM m
@@ -31,7 +59,7 @@ chk m =
         putStrLn ">>>>>>>"
         mapM_ print (M.toList env)
         putStrLn "<<<<<<<"
-        putStrLn ("VALUE: " ++ show value))
+        putStrLn ("VALUE:\n" ++ show value))
       worlds
     putStrLn ("-------\nPARSE COUNT: " ++ show (length values))
 
@@ -83,6 +111,15 @@ p7 = do
   y <- store $ IntLit 1
   z <- store $ IntLit 2
   storeList [x,y,z]
+
+pb = do
+  p1 <- var
+  p2 <- var
+  s <- store (Cons p1 p2)
+  s' <- packBlock s
+  s'' <- packBlock s'
+  return s''
+
 
 -- returns 2 results (two ways to assoc), both 2 by 5
 p6 = main "2 by 3 matrix * 3 by 4 matrix * 4 by 5 matrix"
