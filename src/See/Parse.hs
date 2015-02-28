@@ -3,6 +3,9 @@
 -- unification vars/Ref/Prop interaction is not right
 -- !!
 --
+-- need way to interact with failed parse
+--   - need to annotate tips with 'time'
+--
 -- print output graph
 --   and especially: the context stack
 --
@@ -55,7 +58,7 @@ isVal name = do
     Ref _ -> return ()
     Symbol _ -> return ()
     IntLit _ -> return ()
-    _ -> mzero
+    _ -> quit $ "not a val: " ++ show name
 
 sublVar :: VM Name
 sublVar = do
@@ -160,7 +163,7 @@ bindRight name (Subl pre post out) = do
 
 -- TODO may diverge when stack is a Var
 reduceLeft :: Stack -> Subl Name -> VM (Subl Name)
-reduceLeft stack s@(Subl pre _ _) = matchNil `mplus` matchCons
+reduceLeft stack s@(Subl pre _ _) = matchNil `amb` matchCons
  where
    matchNil = do
      isNil pre
@@ -205,7 +208,7 @@ assert cond msg = if cond then return () else do
   if debugFlag
     then simplePrintError msg
     else return ()
-  mzero
+  quit msg
 
 unify :: Name -> Name -> VM ()
 unify n1 n2 = do
@@ -244,12 +247,12 @@ unifyProperty name prop = do
     Just link -> unify (object link) (object prop)
 
 unifyLeft :: Name -> Val Name -> Name -> Val Name -> VM ()
--- Should this happen? (it has)
 unifyLeft n1 _ n2 _ | n1 == n2 = return ()
 -- TODO cleaner way to do this?
 unifyLeft n1 Var n2 Var = do
   substitute n1 n2
   put n1 (Ref n2)
+-- avoid Ref loop
 unifyLeft n1 Var _ v2 =
   case v2 of
     Ref n | n == n1 -> return ()
@@ -262,7 +265,7 @@ unifyLeft n1 v1 n2 Var = unifyLeft n2 Var n1 v1
 unifyLeft n1 v1 n2 v2 = do
   assert (tagEq v1 v2) $ "tag mismatch:\n" ++
            " nodes: " ++ sep n1 n2 ++ ";\n" ++
-           " vals: " ++ sep v1 v2
+           " vals: " ++ sep v1 v2 ++ "\n"
   unifyMany (children v1) (children v2)
 
 unifyMany :: [Name] -> [Name] -> VM ()
@@ -366,7 +369,7 @@ newBinding context tag name = do
 -- which may be desirable to maximize ambiguity 
 --
 -- we could change it to 
---   matchHead `mplus` (not matchHead >> matchTail)
+--   matchHead `amb` (not matchHead >> matchTail)
 --   or do an explicit match on the tag of the first element
 lookupBinding :: Stack -> Tag -> VM Name
 lookupBinding (Stack s) tag = do
@@ -374,7 +377,7 @@ lookupBinding (Stack s) tag = do
   lookupBinding' n tag
 
 lookupBinding' :: Name -> Tag -> VM Name
-lookupBinding' context tag = matchHead `mplus` matchTail
+lookupBinding' context tag = matchHead `amb` matchTail
  where
    -- This handles the case that context is a Var
    matchHead = do
@@ -426,7 +429,7 @@ unfoldCommand context (Just command) = do
           DoSub s -> reduceSubl stack s
           Push s ->
             (push stack s >> return Nothing)
-              `mplus`
+              `amb`
             (Just . DoSub <$> bindTop stack s)
           CreateFrame sym -> do
             Symbol tag <- get sym
@@ -458,7 +461,7 @@ reduceSubl :: Stack -> Subl Name -> VM (Maybe (Command Name))
 reduceSubl stack s = do
   s'@(Subl pre _ _) <- reduceLeft stack s
   isNil pre
-  incomplete s' `mplus` complete s'
+  incomplete s' `amb` complete s'
  where
    complete (Subl _ post out) = do
      isNil post
@@ -469,11 +472,8 @@ reduceSubl stack s = do
      push stack sub
      return Nothing
 
-
 bindTop :: Stack -> Name -> VM (Subl Name)
 bindTop stack n = do
   Sub s <- get =<< pop stack
   bindRight n s
-
-
 

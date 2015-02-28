@@ -1,7 +1,9 @@
 -- TODO clean up imports
 {-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
-module See.Types where
-
+module See.Types
+  (module Monad.Condition, module See.Types)
+where
+import Monad.Condition
 import qualified Data.Map as M
 import Control.Monad
 import Control.Monad.State hiding (get, put)
@@ -12,51 +14,6 @@ import qualified Data.Traversable as T (Traversable, mapAccumR)
 import Data.Foldable (Foldable)
 import Text.Read (readMaybe)
 import Debug.Trace (trace)
-
--- Environment stuff
--- TODO move to Monad.Condition
-newtype Name = N Integer
- deriving (Eq, Ord)
-
-instance Show Name where
-  show (N i) = "#" ++ show i
-
-type UState a = (Integer, M.Map Name a)
-emptyChain :: UState a
-emptyChain = (0, M.empty)
-
-type UM a = StateT (UState a) [] 
-runUM :: UM s a -> [(a, UState s)]
-runUM m = runStateT m emptyChain
-
-get :: Name -> UM a a
-get name = do
-  (_, m) <- S.get
-  return $ fromJust . M.lookup name $ m
-
-store :: a -> UM a Name
-store val = do
-  (count, env) <- S.get
-  let name = N (count + 1)
-  S.put (count + 1, M.insert name val env)
-  return name
-
-put :: Name -> a -> UM a ()
-put name val = modify $ \(c, env) -> (c, M.insert name val env)
-
--- Returns all objects that refer to given name
-refs :: (Name -> a -> Maybe b) -> UM a [b]
-refs fn = do
-  (_, env) <- S.get
-  return $ mapMaybe (uncurry fn) $ M.toList env
-
-modifyAll :: (Name -> a -> a) -> UM a ()
-modifyAll fn = do
-  (c, env) <- S.get
-  S.put (c, M.mapWithKey fn env)
-
-getEnv :: UM a [(Name, a)]
-getEnv = M.toList . snd <$> S.get
 
 -----------------------------
 -- Core Internal Structure --
@@ -86,7 +43,6 @@ data Command a
   | DoNothing
  deriving (Eq, Ord, Show, Functor, Foldable, T.Traversable)
 
-
 -- Core datatype
 data Val a
   = Var
@@ -115,8 +71,19 @@ newtype Stack = Stack Name
 newtype Context = Context Stack
   deriving (Show, Eq, Ord)
 
--- Primary monad type
-type VM = UM (Val Name)
+-- Primary Monad Type --
+type Error = String
+type VM = Condition Error (Val Name)
+runVM = runCondition
+
+refs :: (Name -> Val Name -> Maybe b) -> VM [b]
+refs = filterEnv
+
+getEnv :: VM [(Name, Val Name)]
+getEnv = M.toList . snd <$> S.get
+
+quit :: Error -> VM ()
+quit m = exit m
 ------------------------
 -- End Core Structure --
 ------------------------

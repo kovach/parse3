@@ -58,7 +58,8 @@ library
   
   -- Other library packages from which modules are imported.
   build-depends:       base >=4.7 && <4.8, name >=0.1 && <0.2, mtl >=2.1 && <2.2,
-                       containers, free
+                       containers, free,
+                       condition
   
   -- Directories containing source files.
   hs-source-dirs:      src

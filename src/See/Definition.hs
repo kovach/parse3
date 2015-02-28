@@ -56,30 +56,4 @@ copyVals root names = do
   (_, root') <- copyVal mapping root
   return root'
 
-getRange :: Name -> Name -> UM a [a]
-getRange = undefined
 
--- Vocab needed
--- a
---   a _type_        -> val
---   a _type_ _val_  -> val
--- is, =
---   _val1_ is _val2_ -> unify val1 val2, return no object
--- where
---   _a_ where _b_ -> no op?
--- set -> just a basic object
--- in
---   _symbol_ in _type=set_
---
--- tuple syntax ( , ). base it on , ?
---   ( _val1_ , _val2_ )  -> tuple
---   pre , post
---
--- and?
---
---
--- e.g.
--- def square: a square matrix is a n by n matrix.
--- def graph: a graph is a pair (V, E).
---   V is a set.
---   e in E is a (V, V).

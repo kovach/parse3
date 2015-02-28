@@ -5,6 +5,8 @@ import See.Parse
 import See.Definition
 import qualified Data.Map as M
 
+import Data.Either (partitionEithers)
+
 -- Testing
 main :: String -> IO ()
 main = main_ True
@@ -35,6 +37,7 @@ printVal n = do
     Ptr n -> printStack n
     _ -> return $ show val
 
+-- TODO
 printStack s = do
   list <- get s
   case list of
@@ -46,23 +49,28 @@ printStack s = do
       return (s1 ++ "\n" ++ s2)
     _ -> error (show list)
 
-  
-
-           
 
 chk :: Show a => VM a -> IO ()
 chk m =
-  let worlds = runUM m
+  let worlds = runVM m
       (values, _) = unzip worlds
-  in do
-    mapM_
-      (\(value, (_, env)) -> do
+      lf :: (Either a b, c) -> Either a (b, c)
+      lf (ma, b) = do
+        a <- ma
+        return (a, b)
+      get (val, (_, env)) = (val, env)
+      printSuccess (value, env) = do
         putStrLn ">>>>>>>"
         mapM_ print (M.toList env)
         putStrLn "<<<<<<<"
-        putStrLn ("VALUE:\n" ++ show value))
-      worlds
-    putStrLn ("-------\nPARSE COUNT: " ++ show (length values))
+        print value
+
+      (failures, successes) = partitionEithers (map lf worlds)
+
+  in do
+    mapM_ (printSuccess . get) $ successes
+    putStrLn $ "-------\nPARSE COUNT: " ++ show (length successes)
+    putStrLn $ "FAILED PARSES: " ++ show (length failures)
 
 
 p0 = var >> var
