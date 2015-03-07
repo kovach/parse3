@@ -5,7 +5,8 @@ import See.Parse
 import See.Definition
 import qualified Data.Map as M
 
-import Data.Either (partitionEithers)
+import Data.Either (isLeft, isRight, partitionEithers)
+import Data.List (sort, sortBy)
 
 -- Testing
 main :: String -> IO ()
@@ -14,7 +15,7 @@ main' :: String -> IO ()
 main' = main_ False
 main_ :: Bool -> String -> IO ()
 main_ closed str = chk $ do
-  context <- parse str
+  (context, assignments) <- parseMain str
   -- get result
 
   -- If closed is true, parsing will fail unless stack contains exactly one
@@ -23,7 +24,8 @@ main_ closed str = chk $ do
     stack <- topStack context
     val <- pop stack
     isEmpty stack 
-    return (Just val) else
+    isVal val
+    return $ Just (val, assignments) else
     return Nothing
 
   --let Context c = context
@@ -50,27 +52,41 @@ printStack s = do
     _ -> error (show list)
 
 
+sortWith f = sortBy (\x y -> compare (f x) (f y))
+
 chk :: Show a => VM a -> IO ()
 chk m =
-  let worlds = runVM m
-      (values, _) = unzip worlds
+  let 
+      outcomes = runVM m
+      (values, _) = unzip outcomes
       lf :: (Either a b, c) -> Either a (b, c)
       lf (ma, b) = do
         a <- ma
         return (a, b)
-      get (val, (_, env)) = (val, env)
-      printSuccess (value, env) = do
+      printSuccess (value, (_, env)) = do
         putStrLn ">>>>>>>"
         mapM_ print (M.toList env)
         putStrLn "<<<<<<<"
         print value
 
-      (failures, successes) = partitionEithers (map lf worlds)
+      (_, successes) = partitionEithers (map lf outcomes)
+      failures = reverse $ sortWith (fst . snd) $ filter (isLeft . fst) outcomes
+
+      --failLengths = reverse . sort . map (fst . snd) $ failures
+
+      printFailure (Left err, (count, _)) =
+        putStrLn $ "Left: " ++ show count ++ " " ++ err
+
+      sep = putStrLn "--------------------------------"
 
   in do
-    mapM_ (printSuccess . get) $ successes
-    putStrLn $ "-------\nPARSE COUNT: " ++ show (length successes)
+    mapM_ printSuccess $ successes
+    sep
     putStrLn $ "FAILED PARSES: " ++ show (length failures)
+    mapM_ printFailure $ take 5 failures
+    sep
+    putStrLn $ "PARSE COUNT: " ++ show (length successes)
+    sep
 
 
 p0 = var >> var

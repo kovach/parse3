@@ -83,7 +83,7 @@ rule_a2 = do
   pre <- storeList []
   post <- storeList [theType, obj]
   return $ Subl {pre = pre, post = post, output = Push obj}
-  
+
 -- is
 -- is, =
 --   _val1_ is _val2_ -> unify val1 val2, return no object
@@ -105,11 +105,31 @@ rule_set = do
   propertyVal out "type" tlit
   return $ Subl {pre = nil, post = nil, output = Push out}
 
+-- number
+rule_num :: Rule
+rule_num = do
+  nil <- storeList []
+  out <- store (Val "number")
+  tlit <- store (Val "type")
+  propertyVal out "type" tlit
+  return $ Subl {pre = nil, post = nil, output = Push out}
+
+-- type
+rule_type :: Rule
+rule_type = do
+  nil <- storeList []
+  out <- store (Val "type")
+  --tlit <- store (Val "type")
+  --propertyVal out "type" tlit
+  return $ Subl {pre = nil, post = nil, output = Push out}
+
 
 -- TODO:
 -- where
 -- in
 -- ( , )
+
+-- --
 
 -- Strange Rules --
 -- syntactic pop
@@ -119,6 +139,7 @@ popRule = do
   getlost <- var
   pre <- storeList [getlost]
   return $ Subl {pre = pre, post = nil, output = DoNothing}
+-- --
 
 
 -- Example Objects --
@@ -260,12 +281,15 @@ mainDictionary = [
   match "a" rule_a2,
   match "is" rule_is,
   match "=" rule_is,
-  match "set" rule_set
+  match "set" rule_set,
+  match "type" rule_type,
+  match "number" rule_num
  ]
 
 -- Main Parser Functions --
 -- Special handling of '(' , ')'
-tokenize :: String -> [String]
+type Token = String
+tokenize :: String -> [Token]
 tokenize = words . concatMap pad
  where
    specialChars = "():="
@@ -273,14 +297,14 @@ tokenize = words . concatMap pad
    pad x = [x]
 
 -- Returns parse stack
-parse :: String -> VM Context
-parse str =
+parseMain :: String -> VM (Context, [(Token, Command Name)])
+parseMain str =
   let stream = tokenize str in
   do 
    context <- initialContext
    --stack <- newVarStack
    --stack <- newStack
-   mapM_ (parseWord context mainDictionary) stream
-   return context
+   outputs <- mapM (parseWord context mainDictionary) stream
+   return (context, zip stream outputs)
 
 

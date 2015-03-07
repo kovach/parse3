@@ -104,7 +104,7 @@ isBinding tag n = do
 
 integer :: VM (Name, Name)
 integer = do
-  i <- store (Val "integer")
+  i <- store (Val "a number")
   val <- property i "value"
   return (i, val)
 
@@ -121,6 +121,12 @@ matrix = do
 symbol :: VM (Name, Name)
 symbol = do
   s <- store (Val "symbol")
+  val <- property s "value"
+  return (s, val)
+
+token :: VM (Name, Name)
+token = do
+  s <- store (Val "token")
   val <- property s "value"
   return (s, val)
 
@@ -409,11 +415,13 @@ symbolRule tag = do
   nil <- store Nil
   return $ Subl {pre = nil, post = nil, output = Push obj}
 
-parseWord :: Context -> Dict -> Word -> VM ()
+parseWord :: Context -> Dict -> Word -> VM (Command Name)
 parseWord context dict word = do
   stack <- topStack context
   env   <- topEnv context
-  let step r = reduceSubl stack r >>= unfoldCommand context
+  let step r = do maybeCommand <- reduceSubl stack r
+                  unfoldCommand context maybeCommand
+                  return (output r)
   let rules = case mapMaybe ($ word) dict of
                 [] -> [parseBinding env word, symbolRule word]
                 rs -> rs
@@ -437,7 +445,7 @@ unfoldCommand context (Just command) = do
             v <- sublVar
             newBinding context tag v
             return Nothing
-          CloseFrame -> trace "CLOSING" $ do
+          CloseFrame -> do
             let Context stack = context
             -- Resolve stack, pull mtag out of env, bind it
             Frame mtag stack env <- get =<< pop stack
