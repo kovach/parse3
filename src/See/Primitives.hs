@@ -279,6 +279,8 @@ mainDictionary = [
   -- Words
   match "a" rule_a1,
   match "a" rule_a2,
+  match "an" rule_a1,
+  match "an" rule_a2,
   match "is" rule_is,
   match "=" rule_is,
   match "set" rule_set,

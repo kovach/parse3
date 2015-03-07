@@ -1,16 +1,15 @@
 -- TODO
 -- !!
 -- unification vars/Ref/Prop interaction is not right
+--   did I fix it?
+--   need to write test to check `walk`
 -- !!
 --
 -- need way to interact with failed parse
---   - need to annotate tips with 'time'
---
 -- print output graph
 --   and especially: the context stack
 --
 -- organize files
--- use Condition monad
 -- web client
 -- better factoring for rule vs parser split?
 -- make Ptrs immutable? need to add an 'Update' Val, cache object?
@@ -216,10 +215,20 @@ assert cond msg = if cond then return () else do
     else return ()
   quit msg
 
+-- TODO add walk
+walk :: Name -> VM Name
+walk name = do
+  v <- get name
+  case v of
+    Ref name' -> walk name'
+    _ -> return name
+
 unify :: Name -> Name -> VM ()
 unify n1 n2 = do
-  v1 <- get n1
-  v2 <- get n2
+  n1' <- walk n1
+  n2' <- walk n2
+  v1 <- get n1'
+  v2 <- get n2'
   -- Unify values
   unifyLeft n1 v1 n2 v2
   -- Unify all properties

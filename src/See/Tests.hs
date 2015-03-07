@@ -18,15 +18,18 @@ main_ closed str = chk $ do
   (context, assignments) <- parseMain str
   -- get result
 
+  -- Parsing will fail if stack is empty
+  stack <- topStack context
+  val <- pop stack
+
   -- If closed is true, parsing will fail unless stack contains exactly one
   -- element
   if closed then do
-    stack <- topStack context
-    val <- pop stack
     isEmpty stack 
     isVal val
-    return $ Just (val, assignments) else
-    return Nothing
+    else return ()
+
+  return $ Just (val, assignments)
 
   --let Context c = context
   --str <- printVal $ stackName c
@@ -87,6 +90,7 @@ chk m =
     sep
     putStrLn $ "PARSE COUNT: " ++ show (length successes)
     sep
+    putStrLn "\n"
 
 
 p0 = var >> var
