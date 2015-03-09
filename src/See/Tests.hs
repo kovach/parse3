@@ -68,7 +68,7 @@ chk m =
         return (a, b)
       printSuccess (value, (_, env)) = do
         putStrLn ">>>>>>>"
-        mapM_ print (M.toList env)
+        mapM_ print env
         putStrLn "<<<<<<<"
         print value
 

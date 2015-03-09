@@ -1,17 +1,27 @@
 -- TODO
--- !!
+--
+-- check CloseFrame; verify symbol value is done
+--
 -- unification vars/Ref/Prop interaction is not right
---   did I fix it?
+--   did I fix it with walk?
 --   need to write test to check `walk`
--- !!
 --
--- need way to interact with failed parse
--- print output graph
---   and especially: the context stack
+-- gui:
+--   print all rules that are executed through parse?
+--     could interleave with words
+--   render stack, context ([s], because ambiguity)
+--   mouse hover
+--   render subls, values, identities, properties
+--     will need to compute identities, others are tree walks
 --
--- organize files
--- web client
+-- write README
+--
+-- make Condition monad interleave? (rewrite amb)
+--   no infinite problems so far
+--
 -- better factoring for rule vs parser split?
+--   is there a more symmetric way of making rules like ` ( , ) `  ?
+--
 -- make Ptrs immutable? need to add an 'Update' Val, cache object?
 --
 module See.Parse where
@@ -369,7 +379,6 @@ initialContext = do
   _ <- newFrame Nothing c
   return c
 
-
 pushBinding :: Stack -> Tag -> Name -> VM ()
 pushBinding stack tag name = do
   store (Binding tag name) >>= push stack
@@ -413,29 +422,26 @@ parseBinding env tag = do
   Sub s <- get =<< lookupBinding env tag
   return s
 
--- Top level parsing functions --
+bindTop :: Stack -> Name -> VM (Subl Name)
+bindTop stack n = do
+  Sub s <- get =<< pop stack
+  bindRight n s
 
--- Default parser, in case no proper rule matches
-symbolRule :: Tag -> Rule
-symbolRule tag = do
-  (obj, val) <- symbol
-  lit <- symbolLit tag
-  unify val lit
-  nil <- store Nil
-  return $ Subl {pre = nil, post = nil, output = Push obj}
-
-parseWord :: Context -> Dict -> Word -> VM (Command Name)
-parseWord context dict word = do
-  stack <- topStack context
-  env   <- topEnv context
-  let step r = do maybeCommand <- reduceSubl stack r
-                  unfoldCommand context maybeCommand
-                  return (output r)
-  let rules = case mapMaybe ($ word) dict of
-                [] -> [parseBinding env word, symbolRule word]
-                rs -> rs
-  -- Run each rule, reduce the Subl, combine
-  msum . map (step =<<) $ rules
+-- Reduces Subl using stack
+reduceSubl :: Stack -> Subl Name -> VM (Maybe (Command Name))
+reduceSubl stack s = do
+  s'@(Subl pre _ _) <- reduceLeft stack s
+  isNil pre
+  incomplete s' `amb` complete s'
+ where
+   complete (Subl _ post out) = do
+     isNil post
+     return $ Just out
+   incomplete s@(Subl _ post out) = do
+     (_, _) <- isCons post
+     sub <- store (Sub s)
+     push stack sub
+     return Nothing
 
 unfoldCommand :: Context -> Maybe (Command Name) -> VM ()
 unfoldCommand _ Nothing = return ()
@@ -473,24 +479,28 @@ unfoldCommand context (Just command) = do
 
   unfoldCommand context mc
 
--- Reduces Subl using stack, 
-reduceSubl :: Stack -> Subl Name -> VM (Maybe (Command Name))
-reduceSubl stack s = do
-  s'@(Subl pre _ _) <- reduceLeft stack s
-  isNil pre
-  incomplete s' `amb` complete s'
- where
-   complete (Subl _ post out) = do
-     isNil post
-     return $ Just out
-   incomplete s@(Subl _ post out) = do
-     (_, _) <- isCons post
-     sub <- store (Sub s)
-     push stack sub
-     return Nothing
+-- Top level parsing functions --
 
-bindTop :: Stack -> Name -> VM (Subl Name)
-bindTop stack n = do
-  Sub s <- get =<< pop stack
-  bindRight n s
+-- Default parser, in case no proper rule matches
+-- A basic set of rules are defined in See.Primitives
+symbolRule :: Tag -> Rule
+symbolRule tag = do
+  (obj, val) <- symbol
+  lit <- symbolLit tag
+  unify val lit
+  nil <- store Nil
+  return $ Subl {pre = nil, post = nil, output = Push obj}
+
+parseWord :: Context -> Dict -> Token -> VM (Command Name)
+parseWord context dict word = do
+  stack <- topStack context
+  env   <- topEnv context
+  let step r = do maybeCommand <- reduceSubl stack r
+                  unfoldCommand context maybeCommand
+                  return (output r)
+  let rules = case mapMaybe ($ word) dict of
+                [] -> [parseBinding env word, symbolRule word]
+                rs -> rs
+  -- Run each rule, reduce the Subl, combine
+  msum . map (step =<<) $ rules
 

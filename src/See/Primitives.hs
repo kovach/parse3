@@ -211,7 +211,6 @@ parenRule = do
   return $ Subl {pre = nil, post = post, output = Push body}
 
 -- Basic Parsers --
-
 readInt :: String -> Maybe Integer
 readInt = readMaybe
 
@@ -224,26 +223,8 @@ intParse word = do
   i <- readInt word
   return (integerRule i)
 
-mmulParse :: Parser
-mmulParse = match "*" mmulRule
-
-imulParse :: Parser
-imulParse = match "*" imulRule
-
 tokenParse :: String -> Parser
 tokenParse model = match model (tokenRule model)
-
-matrixParse :: Parser
-matrixParse = match "matrix" matrixRule
-
-parenParse :: Parser
-parenParse = match "(" parenRule
-
-tupleParse :: Parser
-tupleParse = match "pair" tupleRule
-
-definitionParse :: Parser
-definitionParse = match "def" definitionRule
 
 -- Matches anything
 symbolParse :: Parser
@@ -256,25 +237,25 @@ mainDictionary = [
 
   -- basic nodes
   intParse,
-  matrixParse,
+  match "matrix" matrixRule,
     tokenParse "by",
 
-  -- match "*"
-  imulParse,
-  mmulParse,
+  -- types of products
+  match "*" imulRule,
+  match "*" mmulRule,
 
   -- grouping
-  parenParse,
+  match "(" parenRule,
     tokenParse ")",
 
   -- pairs
-  tupleParse,
+  match "pair" tupleRule,
 
   -- DEFINITIONS
   tokenParse ":",
   match "qed" qedRule,
   match "end" qedRule,
-  definitionParse,
+  match "def" definitionRule,
 
   -- Words
   match "a" rule_a1,
@@ -290,7 +271,6 @@ mainDictionary = [
 
 -- Main Parser Functions --
 -- Special handling of '(' , ')'
-type Token = String
 tokenize :: String -> [Token]
 tokenize = words . concatMap pad
  where
@@ -308,5 +288,3 @@ parseMain str =
    --stack <- newStack
    outputs <- mapM (parseWord context mainDictionary) stream
    return (context, zip stream outputs)
-
-

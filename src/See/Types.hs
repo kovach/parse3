@@ -13,7 +13,7 @@ import Data.Maybe (fromJust, mapMaybe)
 import qualified Data.Traversable as T (Traversable, mapAccumR)
 import Data.Foldable (Foldable)
 import Text.Read (readMaybe)
-import Debug.Trace (trace)
+import Control.Arrow (second)
 
 -----------------------------
 -- Core Internal Structure --
@@ -74,7 +74,9 @@ newtype Context = Context Stack
 -- Primary Monad Type --
 type Error = String
 type VM = Condition Error (Val Name)
-runVM = runCondition
+
+runVM :: VM a -> [(Either Error a, WrittenEnv (Val Integer))]
+runVM = map (second writeEnvF) . runCondition
 
 refs :: (Name -> Val Name -> Maybe b) -> VM [b]
 refs = filterEnv
@@ -90,8 +92,8 @@ quit m = exit m
 
 type Rule = VM (Subl Name)
 
-type Word = String
-type Parser = Word -> Maybe Rule
+type Token = String
+type Parser = Token -> Maybe Rule
 type Dict = [Parser]
 
 -- Tree utilities
